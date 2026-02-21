@@ -3,12 +3,23 @@
 import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { Loader2, Sparkles, MapPin, Tag, FileText, Copy, CheckCircle2, Wand2 } from "lucide-react"
+import {
+    Loader2,
+    Sparkles,
+    MapPin,
+    Tag,
+    FileText,
+    Copy,
+    CheckCircle2,
+    Wand2,
+    AlertCircle,
+} from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import {
     Form,
     FormControl,
+    FormDescription,
     FormField,
     FormItem,
     FormLabel,
@@ -16,10 +27,36 @@ import {
 } from "@/components/ui/form"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 import { Skeleton } from "@/components/ui/skeleton"
-import { productSchema, type ProductFormValues, defaultValues } from "@/lib/schema"
+import { productSchema, type ProductFormValues, defaultValues, type AIGeneratedValues } from "@/lib/schema"
+import { FIELD_LIMITS } from "@/lib/constants"
+
+async function callGenerateAPI(
+    productName: string,
+    mode: "all" | "seo"
+): Promise<AIGeneratedValues> {
+    const res = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productName, mode }),
+    })
+
+    const data = await res.json()
+
+    if (!res.ok) {
+        throw new Error(data.error ?? `Request failed (${res.status})`)
+    }
+
+    return data as AIGeneratedValues
+}
 
 export function ProductForm() {
     const { toast } = useToast()
@@ -28,7 +65,6 @@ export function ProductForm() {
     const [isGeneratingAutoFill, setIsGeneratingAutoFill] = useState(false)
     const [copied, setCopied] = useState(false)
 
-    // Using mode: 'onChange' for on-the-fly validation
     const form = useForm<ProductFormValues>({
         resolver: zodResolver(productSchema),
         defaultValues,
@@ -42,175 +78,170 @@ export function ProductForm() {
         try {
             await navigator.clipboard.writeText(code)
             setCopied(true)
-            toast({
-                title: "Copied!",
-                description: "Product Code copied to clipboard.",
-            })
+            toast({ title: "Copied!", description: "Product code copied to clipboard." })
             setTimeout(() => setCopied(false), 2000)
         } catch (err) {
+            console.error("Clipboard write failed:", err)
             toast({
                 variant: "destructive",
                 title: "Failed to copy",
-                description: "Could not copy text to clipboard.",
+                description: "Your browser blocked clipboard access. Please copy manually.",
             })
         }
     }
 
-    // Smart Auto-Fill Helper
     const handleAutoFill = async () => {
         const productName = form.getValues("name")
-        if (!productName) {
+        if (!productName.trim()) {
             toast({
                 variant: "destructive",
-                title: "Missing Name",
-                description: "Please enter a product name first before using AI Auto-Fill.",
+                title: "Missing product name",
+                description: "Enter a product name first, then use Auto-Fill.",
             })
             return
         }
-
         setIsGeneratingAutoFill(true)
-
         try {
-            const res = await fetch("/api/generate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productName, mode: "all" })
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json()
-                throw new Error(errorData.error || "Failed to generate AI data")
-            }
-
-            const data = await res.json()
-
-            // Update form fields automatically based on strictly typed response
-            form.setValue("code", data.code || "", { shouldValidate: true })
-            form.setValue("description_short", data.description_short || "", { shouldValidate: true })
-            form.setValue("description_long", data.description_long || "", { shouldValidate: true })
-            form.setValue("marketplace_price", data.marketplace_price || 0, { shouldValidate: true })
-            form.setValue("seo_title", data.seo_title || "", { shouldValidate: true })
-            form.setValue("seo_description", data.seo_description || "", { shouldValidate: true })
-            form.setValue("seo_keywords", data.seo_keywords || [], { shouldValidate: true })
-
+            const data = await callGenerateAPI(productName, "all")
+            if (data.code)
+                form.setValue("code", data.code, { shouldValidate: true })
+            if (data.marketplace_price !== undefined)
+                form.setValue("marketplace_price", data.marketplace_price, { shouldValidate: true })
+            if (data.description_short)
+                form.setValue("description_short", data.description_short.slice(0, FIELD_LIMITS.SHORT_DESC_MAX).trim(), { shouldValidate: true })
+            if (data.description_long)
+                form.setValue("description_long", data.description_long.slice(0, FIELD_LIMITS.LONG_DESC_MAX).trim(), { shouldValidate: true })
+            if (data.seo_title)
+                form.setValue("seo_title", data.seo_title.slice(0, FIELD_LIMITS.SEO_TITLE_MAX).trim(), { shouldValidate: true })
+            if (data.seo_description)
+                form.setValue("seo_description", data.seo_description.slice(0, FIELD_LIMITS.SEO_DESC_MAX).trim(), { shouldValidate: true })
+            if (data.seo_keywords)
+                form.setValue("seo_keywords", data.seo_keywords.map(k => k.trim()).filter(Boolean).slice(0, FIELD_LIMITS.SEO_KEYWORDS_MAX), { shouldValidate: true })
             toast({
-                title: "Auto-Fill Complete",
-                description: "Successfully filled out product details using Gemini AI.",
+                title: "Auto-Fill complete",
+                description: "Product details generated successfully. Review before submitting.",
             })
-
-        } catch (error) {
-            console.error("Auto-Fill Error:", error)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Unknown error"
+            console.error("Auto-Fill failed:", message)
             toast({
                 variant: "destructive",
-                title: "AI Generation Failed",
-                description: "There was a problem generating the product details. Please try again or fill manually.",
+                title: "Auto-Fill failed",
+                description: message,
             })
         } finally {
             setIsGeneratingAutoFill(false)
         }
     }
 
-
-    // Auto generate SEO parameters
     const handleGenerateSEO = async () => {
         const productName = form.getValues("name")
-        if (!productName) {
+        if (!productName.trim()) {
             toast({
                 variant: "destructive",
-                title: "Missing Name",
-                description: "Please enter a product name first before generating SEO.",
+                title: "Missing product name",
+                description: "Enter a product name first, then generate SEO.",
             })
             return
         }
 
         setIsGeneratingSEO(true)
-
         try {
-            const res = await fetch("/api/generate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ productName, mode: "seo" })
-            });
-
-            if (!res.ok) {
-                const errorData = await res.json()
-                throw new Error(errorData.error || "Failed to generate SEO")
-            }
-
-            const data = await res.json()
-
-            form.setValue("seo_title", data.seo_title || "", { shouldValidate: true })
-            form.setValue("seo_description", data.seo_description || "", { shouldValidate: true })
-            form.setValue("seo_keywords", data.seo_keywords || [], { shouldValidate: true })
+            const data = await callGenerateAPI(productName, "seo")
+            if (data.seo_title)
+                form.setValue("seo_title", data.seo_title.slice(0, FIELD_LIMITS.SEO_TITLE_MAX).trim(), { shouldValidate: true })
+            if (data.seo_description)
+                form.setValue("seo_description", data.seo_description.slice(0, FIELD_LIMITS.SEO_DESC_MAX).trim(), { shouldValidate: true })
+            if (data.seo_keywords)
+                form.setValue("seo_keywords", data.seo_keywords.map(k => k.trim()).filter(Boolean).slice(0, FIELD_LIMITS.SEO_KEYWORDS_MAX), { shouldValidate: true })
 
             toast({
-                title: "SEO Generated",
-                description: "Successfully fetched optimized SEO fields via Gemini AI.",
+                title: "SEO generated",
+                description: "Review and adjust the generated SEO fields before submitting.",
             })
-        } catch (error) {
-            console.error("SEO Generation Error:", error)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Unknown error"
+            console.error("SEO generation failed:", message)
             toast({
                 variant: "destructive",
-                title: "AI Generation Failed",
-                description: "There was a problem generating SEO fields. Please try manually.",
+                title: "SEO generation failed",
+                description: message,
             })
         } finally {
             setIsGeneratingSEO(false)
         }
     }
 
-
-
     const onSubmit = async (data: ProductFormValues) => {
         setIsSubmitting(true)
         try {
-            const response = await fetch("https://app.tablecrm.com/api/v1/nomenclature/?token=af1874616430e04cfd4bce30035789907e899fc7c3a1a4bb27254828ff304a77", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json"
-                },
-                body: JSON.stringify([data])
-            })
+            const response = await fetch(
+                "https://app.tablecrm.com/api/v1/nomenclature/?token=af1874616430e04cfd4bce30035789907e899fc7c3a1a4bb27254828ff304a77",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify([data]),
+                }
+            )
 
             if (!response.ok) {
-                throw new Error("Failed to create product")
+                const text = await response.text()
+                console.error("CRM error response:", text)
+                throw new Error(`CRM returned ${response.status}. Check console for details.`)
             }
 
+            const text = await response.text()
+            const result = text ? JSON.parse(text) : {}
+            console.log("CRM response:", result)
+
             toast({
-                title: "Success",
-                description: "Product created successfully in CRM!",
+                title: "Product created",
+                description: "The product was successfully added to the CRM.",
             })
 
-            form.reset()
-        } catch (error) {
+            form.reset({
+                ...defaultValues,
+                address: data.address,
+                latitude: data.latitude,
+                longitude: data.longitude,
+            })
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Unknown error"
+            console.error("Product submission failed:", message)
             toast({
                 variant: "destructive",
-                title: "Error Creating Product",
-                description: "There was a problem communicating with the CRM API. Please check your token or try again later.",
+                title: "Failed to create product",
+                description: message,
             })
         } finally {
             setIsSubmitting(false)
         }
     }
 
+    const isAIBusy = isGeneratingAutoFill || isGeneratingSEO
+    const errorCount = Object.keys(form.formState.errors).length
+
     return (
         <Form {...form}>
-            <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
-
-                {/* AI Header */}
+            <form
+                onSubmit={form.handleSubmit(onSubmit)}
+                className="space-y-6"
+                aria-label="Create new product"
+                noValidate
+            >
                 <Card className="border-indigo-500/30 bg-indigo-50/50 dark:bg-indigo-950/20 shadow-sm relative overflow-hidden">
-                    <div className="absolute top-0 right-0 p-4 opacity-10">
+                    <div className="absolute top-0 right-0 p-4 opacity-10" aria-hidden>
                         <Wand2 className="w-24 h-24 text-indigo-500" />
                     </div>
                     <CardHeader className="relative z-10">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
                                 <CardTitle className="text-indigo-600 dark:text-indigo-400 flex items-center gap-2">
-                                    <Wand2 className="w-5 h-5" />
+                                    <Wand2 className="w-5 h-5" aria-hidden />
                                     Smart Product Assistant
                                 </CardTitle>
                                 <CardDescription className="text-indigo-600/70 dark:text-indigo-400/70">
-                                    Enter a product name below and automatically generate all required fields
+                                    Enter a product name below and automatically generate all required fields.
                                 </CardDescription>
                             </div>
                             <Button
@@ -218,24 +249,24 @@ export function ProductForm() {
                                 variant="secondary"
                                 className="bg-indigo-100 text-indigo-700 hover:bg-indigo-200 dark:bg-indigo-900/50 dark:text-indigo-300 dark:hover:bg-indigo-800/60 shadow-sm"
                                 onClick={handleAutoFill}
-                                disabled={isGeneratingAutoFill}
+                                disabled={isAIBusy}
+                                aria-busy={isGeneratingAutoFill}
                             >
                                 {isGeneratingAutoFill ? (
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden />
                                 ) : (
-                                    <Sparkles className="w-4 h-4 mr-2 text-indigo-500" />
+                                    <Sparkles className="w-4 h-4 mr-2 text-indigo-500" aria-hidden />
                                 )}
-                                Auto-Fill From Name
+                                {isGeneratingAutoFill ? "Generating…" : "Auto-Fill From Name"}
                             </Button>
                         </div>
                     </CardHeader>
                 </Card>
 
-                {/* Basic info */}
                 <Card>
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                            <Tag className="w-5 h-5 text-primary" />
+                            <Tag className="w-5 h-5 text-primary" aria-hidden />
                             Basic Information
                         </CardTitle>
                         <CardDescription>Enter the core details of the product.</CardDescription>
@@ -247,40 +278,55 @@ export function ProductForm() {
                                 name="name"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Product Name</FormLabel>
+                                        <FormLabel>
+                                            Product Name <span aria-label="required">*</span>
+                                        </FormLabel>
                                         <FormControl>
                                             <Input
                                                 placeholder="e.g. Premium Widget"
+                                                maxLength={FIELD_LIMITS.NAME_MAX}
+                                                aria-required
                                                 {...field}
-                                                className={form.formState.errors.name ? 'border-destructive focus-visible:ring-destructive' : ''}
                                             />
                                         </FormControl>
+                                        <FormDescription>
+                                            {field.value.length}/{FIELD_LIMITS.NAME_MAX}
+                                        </FormDescription>
                                         <FormMessage />
                                     </FormItem>
                                 )}
                             />
+
                             <FormField
                                 control={form.control}
                                 name="code"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Product Code / SKU</FormLabel>
+                                        <FormLabel>
+                                            Product Code / SKU <span aria-label="required">*</span>
+                                        </FormLabel>
                                         <FormControl>
                                             <div className="flex gap-2">
                                                 <Input
                                                     placeholder="e.g. WIDGET-001"
+                                                    maxLength={FIELD_LIMITS.CODE_MAX}
+                                                    aria-required
                                                     {...field}
-                                                    className={form.formState.errors.code ? 'border-destructive focus-visible:ring-destructive' : ''}
                                                 />
                                                 <Button
                                                     type="button"
                                                     variant="outline"
                                                     size="icon"
                                                     onClick={handleCopySKU}
-                                                    title="Copy SKU"
+                                                    title="Copy SKU to clipboard"
+                                                    aria-label="Copy SKU to clipboard"
                                                     className="shrink-0"
                                                 >
-                                                    {copied ? <CheckCircle2 className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                                                    {copied ? (
+                                                        <CheckCircle2 className="w-4 h-4 text-green-500" aria-hidden />
+                                                    ) : (
+                                                        <Copy className="w-4 h-4" aria-hidden />
+                                                    )}
                                                 </Button>
                                             </div>
                                         </FormControl>
@@ -289,38 +335,42 @@ export function ProductForm() {
                                 )}
                             />
                         </div>
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <FormField
                                 control={form.control}
                                 name="marketplace_price"
                                 render={({ field }) => (
                                     <FormItem>
-                                        <FormLabel>Marketplace Price ($)</FormLabel>
+                                        <FormLabel>
+                                            Marketplace Price ($) <span aria-label="required">*</span>
+                                        </FormLabel>
                                         <FormControl>
                                             <Input
                                                 type="number"
                                                 step="0.01"
+                                                min={0}
+                                                max={10_000_000}
+                                                aria-required
                                                 {...field}
-                                                className={form.formState.errors.marketplace_price ? 'border-destructive focus-visible:ring-destructive' : ''}
                                             />
                                         </FormControl>
                                         <FormMessage />
                                     </FormItem>
                                 )}
                             />
-                            {/* Hidden fields mapped from payload requirements */}
-                            <input type="hidden" {...form.register("unit")} />
-                            <input type="hidden" {...form.register("cashback_type")} />
-                            <input type="hidden" {...form.register("chatting_percent")} />
                         </div>
+
+                        <input type="hidden" {...form.register("unit")} />
+                        <input type="hidden" {...form.register("cashback_type")} />
+                        <input type="hidden" {...form.register("chatting_percent")} />
                     </CardContent>
                 </Card>
 
-                {/* Descriptions */}
                 <Card>
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                            <FileText className="w-5 h-5 text-primary" />
+                            <FileText className="w-5 h-5 text-primary" aria-hidden />
                             Descriptions
                         </CardTitle>
                     </CardHeader>
@@ -333,15 +383,20 @@ export function ProductForm() {
                                     <FormLabel>Short Description</FormLabel>
                                     <FormControl>
                                         <Textarea
-                                            placeholder="Brief summary of the product..."
+                                            placeholder="Brief summary of the product…"
                                             className="resize-none"
+                                            maxLength={FIELD_LIMITS.SHORT_DESC_MAX}
                                             {...field}
                                         />
                                     </FormControl>
+                                    <FormDescription>
+                                        {(field.value ?? "").length}/{FIELD_LIMITS.SHORT_DESC_MAX}
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
                         />
+
                         <FormField
                             control={form.control}
                             name="description_long"
@@ -350,11 +405,15 @@ export function ProductForm() {
                                     <FormLabel>Long Description</FormLabel>
                                     <FormControl>
                                         <Textarea
-                                            placeholder="Detailed product specifications and marketing copy..."
+                                            placeholder="Detailed product specifications and marketing copy…"
                                             className="min-h-[120px]"
+                                            maxLength={FIELD_LIMITS.LONG_DESC_MAX}
                                             {...field}
                                         />
                                     </FormControl>
+                                    <FormDescription>
+                                        {(field.value ?? "").length}/{FIELD_LIMITS.LONG_DESC_MAX}
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
@@ -362,11 +421,10 @@ export function ProductForm() {
                     </CardContent>
                 </Card>
 
-                {/* Location and meta */}
                 <Card>
                     <CardHeader>
                         <CardTitle className="flex items-center gap-2">
-                            <MapPin className="w-5 h-5 text-primary" />
+                            <MapPin className="w-5 h-5 text-primary" aria-hidden />
                             Location Settings
                         </CardTitle>
                     </CardHeader>
@@ -378,12 +436,17 @@ export function ProductForm() {
                                 <FormItem>
                                     <FormLabel>Address</FormLabel>
                                     <FormControl>
-                                        <Input placeholder="123 Main St, City, Country" {...field} />
+                                        <Input
+                                            placeholder="123 Main St, City, Country"
+                                            maxLength={FIELD_LIMITS.ADDRESS_MAX}
+                                            {...field}
+                                        />
                                     </FormControl>
                                     <FormMessage />
                                 </FormItem>
                             )}
                         />
+
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <FormField
                                 control={form.control}
@@ -392,12 +455,21 @@ export function ProductForm() {
                                     <FormItem>
                                         <FormLabel>Latitude</FormLabel>
                                         <FormControl>
-                                            <Input type="number" step="any" {...field} />
+                                            <Input
+                                                type="number"
+                                                step="any"
+                                                min={-90}
+                                                max={90}
+                                                aria-describedby="latitude-hint"
+                                                {...field}
+                                            />
                                         </FormControl>
+                                        <FormDescription id="latitude-hint">-90 to 90</FormDescription>
                                         <FormMessage />
                                     </FormItem>
                                 )}
                             />
+
                             <FormField
                                 control={form.control}
                                 name="longitude"
@@ -405,8 +477,16 @@ export function ProductForm() {
                                     <FormItem>
                                         <FormLabel>Longitude</FormLabel>
                                         <FormControl>
-                                            <Input type="number" step="any" {...field} />
+                                            <Input
+                                                type="number"
+                                                step="any"
+                                                min={-180}
+                                                max={180}
+                                                aria-describedby="longitude-hint"
+                                                {...field}
+                                            />
                                         </FormControl>
+                                        <FormDescription id="longitude-hint">-180 to 180</FormDescription>
                                         <FormMessage />
                                     </FormItem>
                                 )}
@@ -415,93 +495,116 @@ export function ProductForm() {
                     </CardContent>
                 </Card>
 
-                {/* AI SEO Generation */}
                 <Card className="border-primary/20 bg-primary/5">
                     <CardHeader>
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                             <div>
                                 <CardTitle className="flex items-center gap-2 text-primary">
-                                    <Sparkles className="w-5 h-5" />
+                                    <Sparkles className="w-5 h-5" aria-hidden />
                                     SEO Optimization
                                 </CardTitle>
                                 <CardDescription>
-                                    Click the button to automatically generate SEO fields based on the product name.
+                                    Generate SEO fields automatically, or fill them in manually.
                                 </CardDescription>
                             </div>
                             <Button
                                 type="button"
                                 variant="default"
                                 onClick={handleGenerateSEO}
-                                disabled={isGeneratingSEO || isGeneratingAutoFill}
+                                disabled={isAIBusy}
+                                aria-busy={isGeneratingSEO}
                                 className="w-full sm:w-auto"
                             >
                                 {isGeneratingSEO ? (
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden />
                                 ) : (
-                                    <Sparkles className="w-4 h-4 mr-2" />
+                                    <Sparkles className="w-4 h-4 mr-2" aria-hidden />
                                 )}
-                                Generate Optimized SEO
+                                {isGeneratingSEO ? "Generating…" : "Generate Optimized SEO"}
                             </Button>
                         </div>
                     </CardHeader>
-                    <CardContent className="space-y-4">
+
+                    <CardContent className="space-y-4" aria-live="polite" aria-busy={isAIBusy}>
                         <FormField
                             control={form.control}
                             name="seo_title"
                             render={({ field }) => (
                                 <FormItem>
                                     <FormLabel>SEO Title</FormLabel>
-                                    {isGeneratingSEO || isGeneratingAutoFill ? (
+                                    {isAIBusy ? (
                                         <Skeleton className="h-10 w-full" />
                                     ) : (
                                         <FormControl>
-                                            <Input placeholder="Search Engine Title" {...field} />
+                                            <Input
+                                                placeholder="Search engine title"
+                                                maxLength={FIELD_LIMITS.SEO_TITLE_MAX}
+                                                {...field}
+                                            />
                                         </FormControl>
                                     )}
+                                    <FormDescription>
+                                        {(field.value ?? "").length}/{FIELD_LIMITS.SEO_TITLE_MAX} characters
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
                         />
+
                         <FormField
                             control={form.control}
                             name="seo_description"
                             render={({ field }) => (
                                 <FormItem>
                                     <FormLabel>SEO Description</FormLabel>
-                                    {isGeneratingSEO || isGeneratingAutoFill ? (
+                                    {isAIBusy ? (
                                         <Skeleton className="h-[80px] w-full" />
                                     ) : (
                                         <FormControl>
-                                            <Textarea placeholder="Meta description for search engines" className="resize-none" {...field} />
+                                            <Textarea
+                                                placeholder="Meta description for search engines"
+                                                className="resize-none"
+                                                maxLength={FIELD_LIMITS.SEO_DESC_MAX}
+                                                {...field}
+                                            />
                                         </FormControl>
                                     )}
+                                    <FormDescription>
+                                        {(field.value ?? "").length}/{FIELD_LIMITS.SEO_DESC_MAX} characters
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
                         />
+
                         <FormField
                             control={form.control}
                             name="seo_keywords"
                             render={({ field }) => (
                                 <FormItem>
-                                    <FormLabel>SEO Keywords (comma separated)</FormLabel>
-                                    {isGeneratingSEO || isGeneratingAutoFill ? (
+                                    <FormLabel>SEO Keywords</FormLabel>
+                                    {isAIBusy ? (
                                         <Skeleton className="h-10 w-full" />
                                     ) : (
                                         <FormControl>
                                             <Input
-                                                placeholder="keyword1, keyword2"
-                                                value={field.value?.join(", ")}
+                                                placeholder="keyword1, keyword2, keyword3"
+                                                value={field.value?.join(", ") ?? ""}
                                                 onChange={(e) => {
-                                                    const val = e.target.value.split(",").map(k => k.trim()).filter(Boolean)
+                                                    const val = e.target.value
+                                                        .split(",")
+                                                        .map((k) => k.trim())
+                                                        .filter(Boolean)
                                                     field.onChange(val)
                                                 }}
+                                                aria-describedby="keywords-hint"
                                             />
                                         </FormControl>
                                     )}
-                                    <CardDescription className="text-xs mt-1">
-                                        These keywords will be included in the API payload as an array.
-                                    </CardDescription>
+                                    <FormDescription id="keywords-hint">
+                                        Comma-separated. {field.value?.length ?? 0}/{FIELD_LIMITS.SEO_KEYWORDS_MAX} used.
+                                        Stored as an array in the API payload.
+                                    </FormDescription>
                                     <FormMessage />
                                 </FormItem>
                             )}
@@ -510,26 +613,35 @@ export function ProductForm() {
                 </Card>
 
                 <div className="flex flex-col sm:flex-row justify-between items-center gap-4 pb-10 pt-4 border-t">
-                    <p className="text-sm text-muted-foreground w-full text-center sm:text-left">
-                        {Object.keys(form.formState.errors).length > 0 && (
-                            <span className="text-destructive font-medium">Please fix the errors above before submitting.</span>
-                        )}
-                    </p>
+                    {errorCount > 0 ? (
+                        <p className="flex items-center gap-1.5 text-sm text-destructive font-medium" role="alert">
+                            <AlertCircle className="w-4 h-4" aria-hidden />
+                            {errorCount} error{errorCount > 1 ? "s" : ""} — fix them before submitting.
+                        </p>
+                    ) : (
+                        <span />
+                    )}
+
                     <div className="flex gap-4 w-full sm:w-auto justify-end">
                         <Button
                             type="button"
                             variant="outline"
-                            onClick={() => form.reset()}
+                            onClick={() => form.reset(defaultValues)}
                             disabled={isSubmitting}
                             className="w-full sm:w-auto"
                         >
                             Reset
                         </Button>
-                        <Button type="submit" disabled={isSubmitting || !form.formState.isValid} className="w-full sm:w-auto min-w-[150px]">
+                        <Button
+                            type="submit"
+                            disabled={isSubmitting || !form.formState.isValid}
+                            className="w-full sm:w-auto min-w-[150px]"
+                            aria-busy={isSubmitting}
+                        >
                             {isSubmitting ? (
                                 <>
-                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                                    Creating...
+                                    <Loader2 className="w-4 h-4 mr-2 animate-spin" aria-hidden />
+                                    Creating…
                                 </>
                             ) : (
                                 "Create Product"
