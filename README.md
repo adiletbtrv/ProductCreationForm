@@ -1,8 +1,4 @@
-<p align="center">
-  <img src="public/logo.png" alt="TableCRM Product Form Logo" width="80" />
-</p>
-
-<h1 align="center">TableCRM — Product Creation Form</h1>
+<h1 align="center">TableCRM - Product Creation Form</h1>
 
 <p align="center">
   A production-ready product listing form for a marketplace CRM, built with Next.js, TypeScript, and shadcn/ui.
