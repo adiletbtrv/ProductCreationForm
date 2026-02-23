@@ -1,9 +1,11 @@
 <h1 align="center">TableCRM - Product Creation Form</h1>
 
+<img width="4098" height="2304" alt="Screen Shot 2026-02-21 at 23 57 14" src="https://github.com/user-attachments/assets/6620e656-a66b-4af8-832b-ea754a84ed94" />
+<img width="4098" height="2304" alt="Screen Shot 2026-02-21 at 23 57 26" src="https://github.com/user-attachments/assets/e408d304-8d7e-4751-8a50-50825af1041e" />
+
 <p align="center">
   A production-ready product listing form for a marketplace CRM, built with Next.js, TypeScript, and shadcn/ui.
   <br />
-  <a href="[https://product-creation-form.vercel.app](https://product-creation-form-hazel.vercel.app/)"><strong>Live Demo »</strong></a>
 </p>
 
 ---
