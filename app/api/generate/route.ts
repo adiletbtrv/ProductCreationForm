@@ -20,8 +20,9 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "productName (string) is required" }, { status: 400 })
     }
 
-    const { productName, mode } = body as { productName: string; mode?: string }
+    const { productName, mode, locale } = body as { productName: string; mode?: string; locale?: string }
     const trimmedName = productName.trim()
+    const lang = locale === "ru" ? "ru" : "en"
 
     if (!trimmedName) {
         return NextResponse.json({ error: "productName cannot be empty" }, { status: 400 })
@@ -37,16 +38,19 @@ export async function POST(req: NextRequest) {
     if (!process.env.GEMINI_API_KEY) {
         console.error("GEMINI_API_KEY environment variable is not set")
         return NextResponse.json(
-            { error: "AI generation is not configured. Please contact support." },
+            { error: "Generation service is not configured. Please contact support." },
             { status: 503 }
         )
     }
 
     const isGeneratingAll = mode === "all"
+    const langInstruction = lang === "ru"
+        ? "Respond entirely in Russian. All text fields must be written in Russian."
+        : "Respond entirely in English. All text fields must be written in English."
 
     const prompt = isGeneratingAll
-        ? `You are an expert e-commerce product manager. Given the product name "${trimmedName}", generate realistic product details for an online marketplace. It must contain the fields exactly as defined in the schema. Make the text highly professional and appealing.`
-        : `You are an expert SEO specialist. Given the product name "${trimmedName}", generate highly optimized SEO title (max ${FIELD_LIMITS.SEO_TITLE_MAX} chars), description (max ${FIELD_LIMITS.SEO_DESC_MAX} chars), and keywords for an online marketplace. Return the fields exactly as defined in the schema.`
+        ? `You are an expert e-commerce product manager. Given the product name "${trimmedName}", generate realistic product details for an online marketplace. It must contain the fields exactly as defined in the schema. Make the text highly professional and appealing. ${langInstruction}`
+        : `You are an expert SEO specialist. Given the product name "${trimmedName}", generate highly optimized SEO title (max ${FIELD_LIMITS.SEO_TITLE_MAX} chars), description (max ${FIELD_LIMITS.SEO_DESC_MAX} chars), and keywords for an online marketplace. Return the fields exactly as defined in the schema. ${langInstruction}`
 
     const schema = isGeneratingAll
         ? {
@@ -126,7 +130,7 @@ export async function POST(req: NextRequest) {
 
         const textResult = response.text
         if (!textResult) {
-            throw new Error("AI returned an empty response")
+            throw new Error("Service returned an empty response")
         }
 
         // Safe JSON parse
@@ -134,18 +138,18 @@ export async function POST(req: NextRequest) {
         try {
             rawData = JSON.parse(textResult)
         } catch {
-            console.error("Failed to parse AI JSON response:", textResult.slice(0, 200))
+            console.error("Failed to parse JSON response:", textResult.slice(0, 200))
             return NextResponse.json(
-                { error: "AI returned malformed data. Please try again." },
+                { error: "Service returned malformed data. Please try again." },
                 { status: 502 }
             )
         }
 
         const validation = aiGeneratedSchema.safeParse(rawData)
         if (!validation.success) {
-            console.error("AI response failed validation:", validation.error.flatten())
+            console.error("Response failed validation:", validation.error.flatten())
             return NextResponse.json(
-                { error: "AI returned unexpected data shape. Please try again." },
+                { error: "Service returned unexpected data. Please try again." },
                 { status: 502 }
             )
         }
@@ -156,24 +160,24 @@ export async function POST(req: NextRequest) {
             const msg = error.message.toLowerCase()
             if (msg.includes("quota") || msg.includes("rate")) {
                 return NextResponse.json(
-                    { error: "AI service quota exceeded. Please try again later." },
+                    { error: "Service quota exceeded. Please try again later." },
                     { status: 503 }
                 )
             }
             if (msg.includes("api key") || msg.includes("unauthorized")) {
-                console.error("Gemini API key error:", error.message)
+                console.error("API key error:", error.message)
                 return NextResponse.json(
-                    { error: "AI service configuration error. Please contact support." },
+                    { error: "Service configuration error. Please contact support." },
                     { status: 503 }
                 )
             }
-            console.error("Gemini API error:", error.message)
+            console.error("Generation error:", error.message)
         } else {
-            console.error("Unknown Gemini error:", error)
+            console.error("Unknown generation error:", error)
         }
 
         return NextResponse.json(
-            { error: "AI generation failed. Please try again or fill the fields manually." },
+            { error: "Generation failed. Please try again or fill the fields manually." },
             { status: 500 }
         )
     }
